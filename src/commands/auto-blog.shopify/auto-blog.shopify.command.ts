@@ -4,20 +4,21 @@ import { launchBrowser } from '../../utils/browser.util';
 import { BrowserContext, Page } from 'playwright-core';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { prompt } from './prompt';
+import { promptFinal } from './prompt';
 import { retry, sleep } from '../../utils/common.util';
 import { lastValueFrom } from 'rxjs';
 
-type UrlBlog = {
-  url: string;
-  is_done: boolean;
+type DataJson = {
+  prompt: string;
+  blogs: {
+    url: string;
+    url_blog: string | null;
+  }[];
 };
 
 type JsonChatGPT = {
   title: string;
-  keywords: string[];
-  whyTheseKeywordsWork: string;
-  suggestedBlogSections: string[];
+  [key: string]: any;
 };
 
 @Command({
@@ -34,26 +35,26 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     const pathFileSetting = inputs[0];
     const dataJson = JSON.parse(
       readFileSync(pathFileSetting, 'utf8'),
-    ) as UrlBlog[];
+    ) as DataJson;
 
     const browser = await launchBrowser(true);
 
     try {
-      for (const blog of dataJson) {
-        if (blog.is_done) continue;
+      for (const blog of dataJson.blogs) {
+        if (blog.url_blog) continue;
         try {
           const {
             page: pageChatGPT,
             images,
             json,
-          } = await this.getBlogInChatGPT(browser, blog.url);
-          const pageShopify = await this.setUpBlogGenerate(
+          } = await this.getBlogInChatGPT(browser, blog.url, dataJson.prompt);
+          const { page: pageShopify, url_blog } = await this.setUpBlogGenerate(
             browser,
             images,
             json,
           );
 
-          blog.is_done = true;
+          blog.url_blog = url_blog;
 
           // save dataJson
           writeFileSync(
@@ -92,7 +93,11 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     }
   }
 
-  private async getBlogInChatGPT(context: BrowserContext, url: string) {
+  private async getBlogInChatGPT(
+    context: BrowserContext,
+    url: string,
+    prompt: string,
+  ) {
     const page = await context.newPage();
     await page.goto('https://chatgpt.com', {
       waitUntil: 'networkidle',
@@ -105,7 +110,10 @@ export class AutoBlogShopifyCommand extends CommandRunner {
       state: 'visible',
     });
 
-    await page.fill(promptSelector, prompt(url));
+    await page.fill(
+      promptSelector,
+      promptFinal(prompt).replace('{{URL_BLOG}}', url),
+    );
     await page.waitForTimeout(1000);
     await page.keyboard.press('Enter');
 
@@ -123,7 +131,15 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     const lastArticle = articles[articles.length - 1];
 
     const code = await lastArticle.$('code');
-    const json = await code?.evaluate((el) => el.textContent);
+    let json = await code?.evaluate((el) => el.textContent);
+    if (!json) {
+      json = await lastArticle.evaluate(
+        (el) => el.querySelector('p')?.textContent,
+      );
+    }
+
+    console.log(json);
+
     const jsonObject = JSON.parse(json as string) as JsonChatGPT;
     console.log(jsonObject);
 
@@ -228,11 +244,20 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     );
 
     // Điền vào input đầu tiên
-    await inputs
-      .nth(0)
-      .fill(
-        `Keywords: ${json.keywords.join(', ')}\nWhy These Keywords Work: ${json.whyTheseKeywordsWork}\nSuggested Blog Sections: ${json.suggestedBlogSections.join(', ')}`,
-      );
+    await inputs.nth(0).fill(
+      // `Keywords: ${json.keywords.join(', ')}\nWhy These Keywords Work: ${json.whyTheseKeywordsWork}\nSuggested Blog Sections: ${json.suggestedBlogSections.join(', ')}`,
+      Object.keys(json)
+        .filter((key) => key !== 'title')
+        .map((key) => {
+          const value = json[key] as string | string[];
+          if (Array.isArray(value)) {
+            return `${key}: ${value.join(', ')}`;
+          } else {
+            return `${key}: ${value}`;
+          }
+        })
+        .join('\n'),
+    );
 
     const count = await inputs.count();
     await inputs.nth(count - 1).fill(json.title);
@@ -266,7 +291,10 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     });
     await this.publicBlog(page, images);
 
-    return page;
+    return {
+      page,
+      url_blog: href,
+    };
   }
 
   private async publicBlog(page: Page, images: (string | null)[]) {
