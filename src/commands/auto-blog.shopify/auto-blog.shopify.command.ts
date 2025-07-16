@@ -58,7 +58,7 @@ export class AutoBlogShopifyCommand extends CommandRunner {
 
           // save dataJson
           writeFileSync(
-            join(__dirname, 'data.json'),
+            join(pathFileSetting),
             JSON.stringify(dataJson, null, 2),
           );
 
@@ -90,6 +90,7 @@ export class AutoBlogShopifyCommand extends CommandRunner {
       console.log('💥 Lỗi xuất hiện:', error);
     } finally {
       await browser.close();
+      process.exit(0);
     }
   }
 
@@ -112,7 +113,7 @@ export class AutoBlogShopifyCommand extends CommandRunner {
 
     await page.fill(
       promptSelector,
-      promptFinal(prompt).replace('{{URL_BLOG}}', url),
+      promptFinal(prompt).replaceAll('{{URL_BLOG}}', url),
     );
     await page.waitForTimeout(1000);
     await page.keyboard.press('Enter');
@@ -131,11 +132,13 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     const lastArticle = articles[articles.length - 1];
 
     const code = await lastArticle.$('code');
-    let json = await code?.evaluate((el) => el.textContent);
+    let json = await code?.evaluate((el) => {
+      return el.textContent;
+    });
     if (!json) {
-      json = await lastArticle.evaluate(
-        (el) => el.querySelector('p')?.textContent,
-      );
+      json = await lastArticle.evaluate((el) => {
+        return el.querySelector('p')?.textContent;
+      });
     }
 
     console.log(json);
@@ -151,7 +154,7 @@ export class AutoBlogShopifyCommand extends CommandRunner {
       await page.click(promptSelector);
       await page.fill(
         promptSelector,
-        `And you must show me a maximum of 4 relevant images from this article, no images that look like the logo: ${url}`,
+        `Show me a maximum of 4 relevant images from this article ${url}. Do not include any images that look like the logo. Display the images directly in the chat window, not in JSON format.`,
       );
       await page.waitForTimeout(1000);
       await page.keyboard.press('Enter');
@@ -183,6 +186,8 @@ export class AutoBlogShopifyCommand extends CommandRunner {
   }
 
   private async waitOneOf(page: Page) {
+    console.log('🔍 Chờ kết quả...');
+
     await sleep(1000);
 
     const articles = await page.$$('article[data-testid^="conversation-turn"]');
@@ -197,13 +202,42 @@ export class AutoBlogShopifyCommand extends CommandRunner {
       '[data-testid="bad-response-turn-action-button"]',
     ];
 
-    return await Promise.race(
-      selectors.map((selector) =>
-        lastArticle.waitForSelector(selector, {
+    const result = await Promise.race([
+      ...selectors.map(async (selector) => {
+        await lastArticle.waitForSelector(selector, {
           timeout: 1000 * 60 * 5,
-        }),
-      ),
-    );
+        });
+
+        return 'done';
+      }),
+      (async () => {
+        await lastArticle.waitForSelector(
+          '[data-testid="paragen-prefer-response-button"]',
+          {
+            timeout: 1000 * 60 * 5,
+          },
+        );
+
+        return 'click-prefer';
+      })(),
+    ]);
+
+    console.log('🔍 Kết quả:', result);
+
+    if (result.length > 0 && result[0] === 'click-prefer') {
+      const preferButtons = await lastArticle.$$(
+        '[data-testid="paragen-prefer-response-button"]',
+      );
+      await preferButtons[0].click();
+
+      return await Promise.race(
+        selectors.map((selector) =>
+          lastArticle.waitForSelector(selector, {
+            timeout: 1000 * 60 * 5,
+          }),
+        ),
+      );
+    }
   }
 
   private async setUpBlogGenerate(
