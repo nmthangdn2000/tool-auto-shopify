@@ -1,7 +1,7 @@
 import { HttpService } from '@nestjs/axios';
 import { Command, CommandRunner } from 'nest-commander';
 import { launchBrowser } from '../../utils/browser.util';
-import { BrowserContext, Page } from 'playwright-core';
+import { BrowserContext, ElementHandle, Page } from 'playwright-core';
 import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { promptFinal } from './prompt';
@@ -107,14 +107,56 @@ export class AutoBlogShopifyCommand extends CommandRunner {
 
     const promptSelector = '#prompt-textarea';
 
+    const { json: jsonObject, article: lastArticle } = await retry(
+      async (retries) => {
+        return await this.getJsonFromChatGPT(
+          page,
+          prompt,
+          url,
+          promptSelector,
+          retries,
+        );
+      },
+    );
+
+    const srcs = await retry(async (retries, maxRetries) => {
+      return await this.getImagesFromChatGPT(
+        page,
+        url,
+        promptSelector,
+        lastArticle,
+        retries,
+        maxRetries,
+      );
+    });
+
+    return {
+      page,
+      images: srcs,
+      json: jsonObject,
+    };
+  }
+
+  private async getJsonFromChatGPT(
+    page: Page,
+    prompt: string,
+    url: string,
+    promptSelector: string,
+    retries: number,
+  ) {
     await page.waitForSelector(promptSelector, {
       state: 'visible',
     });
 
-    await page.fill(
-      promptSelector,
-      promptFinal(prompt).replaceAll('{{URL_BLOG}}', url),
-    );
+    if (retries === 0) {
+      await page.fill(
+        promptSelector,
+        promptFinal(prompt).replaceAll('{{URL_BLOG}}', url),
+      );
+    } else {
+      await page.fill(promptSelector, promptFinal(''));
+    }
+
     await page.waitForTimeout(1000);
     await page.keyboard.press('Enter');
 
@@ -146,6 +188,20 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     const jsonObject = JSON.parse(json as string) as JsonChatGPT;
     console.log(jsonObject);
 
+    return {
+      json: jsonObject,
+      article: lastArticle,
+    };
+  }
+
+  private async getImagesFromChatGPT(
+    page: Page,
+    url: string,
+    promptSelector: string,
+    lastArticle: ElementHandle<Element>,
+    retries: number,
+    maxRetries: number,
+  ) {
     const imgs = await lastArticle.$$('img');
     let srcs = await Promise.all(imgs.map((img) => img.getAttribute('src')));
     console.log(srcs);
@@ -178,11 +234,11 @@ export class AutoBlogShopifyCommand extends CommandRunner {
       console.log(srcs);
     }
 
-    return {
-      page,
-      images: srcs,
-      json: jsonObject,
-    };
+    if (srcs.length === 0 && retries < maxRetries) {
+      throw new Error('❌ Không tìm thấy ảnh nào.');
+    }
+
+    return srcs;
   }
 
   private async waitOneOf(page: Page) {
