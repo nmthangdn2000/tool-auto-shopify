@@ -305,12 +305,21 @@ export class AutoBlogShopifyCommand extends CommandRunner {
     await page.goto(
       'https://admin.shopify.com/store/the-rike-inc/apps/jolt/posts',
       {
-        waitUntil: 'networkidle',
+        waitUntil: 'domcontentloaded',
         timeout: 1000 * 60 * 1,
       },
     );
 
+    console.log('🔍 Chờ iframe load xong');
+
     const iframe = page.frameLocator('iframe[name="app-iframe"]');
+
+    await iframe
+      .locator(
+        '.Polaris-ResourceList__ResourceListWrapper li.Polaris-ResourceItem__ListItem img',
+      )
+      .first()
+      .waitFor({ state: 'visible', timeout: 1000 * 60 * 1 });
 
     const buttonAdvancedMode = iframe
       .locator(
