@@ -7,7 +7,6 @@ import { retry } from '../../utils/common.util';
 
 type DataJson = {
   user_id: string;
-  message: string;
   user_follows: {
     uniqueId: string;
     nickname: string;
@@ -48,6 +47,13 @@ export class TiktokMessageCommand extends CommandRunner {
       readFileSync(pathFileSetting, 'utf8'),
     ) as DataJson;
 
+    const message = readFileSync(inputs[1], 'utf8');
+
+    if (!message) {
+      console.log('Message file not found');
+      return;
+    }
+
     const browser = await launchBrowser(true);
 
     try {
@@ -69,7 +75,7 @@ export class TiktokMessageCommand extends CommandRunner {
 
       if (userNotChatted.length > 0) {
         console.log('Sending message to', userNotChatted.length, 'users');
-        await this.message(page, dataJson, pathFileSetting);
+        await this.message(page, dataJson, message, pathFileSetting);
       }
 
       console.log('Getting followers');
@@ -123,6 +129,7 @@ export class TiktokMessageCommand extends CommandRunner {
   private async message(
     page: Page,
     dataJson: DataJson,
+    message: string,
     pathFileSetting: string,
   ) {
     for (const user of dataJson.user_follows) {
@@ -144,7 +151,7 @@ export class TiktokMessageCommand extends CommandRunner {
         });
         await input.click();
         await page.waitForTimeout(1000);
-        await page.keyboard.type(dataJson.message);
+        await page.keyboard.type(message);
 
         await frame.locator('svg[data-e2e="message-send"]').click();
 
