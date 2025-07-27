@@ -30,13 +30,16 @@ export const launchBrowser = async (showBrowser: boolean) => {
     throw new Error('Unsupported platform: ' + platform);
   }
 
+  console.log(userDataDir);
+
   const browser = await chromium.launchPersistentContext(userDataDir, {
+    channel: 'chrome',
     headless: showBrowser ? false : true,
     executablePath,
     args: [
       '--disable-blink-features=AutomationControlled',
       '--no-sandbox',
-      // '--profile-directory=Profile 5',
+      // '--profile-directory=Profile 7',
     ],
     viewport: {
       width: process.env.BROWSER_WIDTH
