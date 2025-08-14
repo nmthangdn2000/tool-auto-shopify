@@ -2,7 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import { Command, CommandRunner } from 'nest-commander';
 import { readFileSync, writeFileSync } from 'fs';
 import { launchBrowser } from '../../utils/browser.util';
-import { Locator, Page } from 'playwright-core';
+import { FrameLocator, Locator, Page } from 'playwright-core';
 import { retry } from '../../utils/common.util';
 
 type DataJson = {
@@ -64,26 +64,51 @@ export class TiktokMessageCommand extends CommandRunner {
       });
 
       const currentUrl = page.url();
-      if (currentUrl.includes('login')) {
+      const loginContainer = await page
+        .locator('div[id="loginContainer"]')
+        .isVisible({
+          timeout: 10000,
+        });
+      const isLoggedIn = currentUrl.includes('login') || !loginContainer;
+
+      if (!isLoggedIn) {
         console.log('Please login to TikTok');
         throw new Error('Please set show_browser to true to login to TikTok');
       }
 
+      await this.handleSendMessage(page, dataJson, message, pathFileSetting);
+
       await page.locator('a[data-e2e="nav-profile"] button').click();
 
-      const userNotChatted = dataJson.user_follows.filter((u) => !u.chatted);
-
-      if (userNotChatted.length > 0) {
-        console.log('Sending message to', userNotChatted.length, 'users');
-        await this.message(page, dataJson, message, pathFileSetting);
-      }
-
       console.log('Getting followers');
-      return await this.getFollowers(page, pathFileSetting);
+      await this.getFollowers(page, pathFileSetting);
+
+      await this.handleSendMessage(
+        page,
+        JSON.parse(readFileSync(pathFileSetting, 'utf8')) as DataJson,
+        message,
+        pathFileSetting,
+      );
+
+      console.log('Done');
     } catch (error) {
       console.log(error);
     } finally {
       await browser.close();
+    }
+  }
+
+  private async handleSendMessage(
+    page: Page,
+    dataJson: DataJson,
+    message: string,
+    pathFileSetting: string,
+  ) {
+    const userNotChatted = dataJson.user_follows.filter((u) => !u.chatted);
+
+    if (userNotChatted.length > 0) {
+      console.log('Sending message to', userNotChatted.length, 'users');
+      await this.message(page, dataJson, message, pathFileSetting);
     }
   }
 
@@ -136,16 +161,22 @@ export class TiktokMessageCommand extends CommandRunner {
       if (user.chatted) continue;
 
       await retry(async () => {
-        await page.goto(
-          `https://www.tiktok.com/business-suite/messages?lang=en&u=${user.id}`,
-        );
+        await page.goto(`https://www.tiktok.com/messages?lang=en&u=${user.id}`);
         // await page.goto(
         //   `https://www.tiktok.com/messages?from=homepage&lang=en&u=7277192393706324999`,
         // );
 
-        const frame = page.frameLocator(`iframe[src*="${user.id}"]`);
+        let frameContext: Page | FrameLocator;
 
-        const input = frame.locator('div[contenteditable="true"]');
+        const iframe = await page.$(`iframe[src*="${user.id}"]`);
+
+        if (iframe) {
+          frameContext = page.frameLocator(`iframe[src*="${user.id}"]`);
+        } else {
+          frameContext = page;
+        }
+
+        const input = frameContext.locator('div[contenteditable="true"]');
         await input.waitFor({
           state: 'visible',
         });
@@ -153,7 +184,7 @@ export class TiktokMessageCommand extends CommandRunner {
         await page.waitForTimeout(1000);
         await page.keyboard.type(message);
 
-        await frame.locator('svg[data-e2e="message-send"]').click();
+        await frameContext.locator('svg[data-e2e="message-send"]').click();
 
         user.chatted = true;
         writeFileSync(pathFileSetting, JSON.stringify(dataJson, null, 2));

@@ -18,10 +18,7 @@ export const launchBrowser = async (showBrowser: boolean) => {
   }
 
   if (platform === 'win32') {
-    userDataDir = path.join(
-      process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData/Local'),
-      'Google/Chrome/User Data/Default',
-    );
+    userDataDir = path.join('./public/chrome-data');
     executablePath =
       'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
   }
@@ -30,8 +27,6 @@ export const launchBrowser = async (showBrowser: boolean) => {
     throw new Error('Unsupported platform: ' + platform);
   }
 
-  console.log(userDataDir);
-
   const browser = await chromium.launchPersistentContext(userDataDir, {
     channel: 'chrome',
     headless: showBrowser ? false : true,
@@ -39,7 +34,7 @@ export const launchBrowser = async (showBrowser: boolean) => {
     args: [
       '--disable-blink-features=AutomationControlled',
       '--no-sandbox',
-      // '--profile-directory=Profile 7',
+      '--profile-directory=Profile 7',
     ],
     viewport: {
       width: process.env.BROWSER_WIDTH
