@@ -1,48 +1,4 @@
 {
   "user_id": "winuptimum",
-  "message": "Hello, this is a test message",
-  "user_follows": [
-    {
-      "uniqueId": "therikecom",
-      "nickname": "The Rike Stories",
-      "id": "7511885740617385003",
-      "chatted": true
-    },
-    {
-      "uniqueId": "nng.l.th13",
-      "nickname": "uoh ị",
-      "id": "7435550946433942529",
-      "chatted": true
-    },
-    {
-      "uniqueId": "nagaki0010",
-      "nickname": "Vũ Hoàng",
-      "id": "6659306780012904449",
-      "chatted": true
-    },
-    {
-      "uniqueId": "tptindl",
-      "nickname": "Lotus",
-      "id": "7025614218117334018",
-      "chatted": false
-    },
-    {
-      "uniqueId": "_heulwen.th.h_",
-      "nickname": "Nguyễn Thanh Huyền",
-      "id": "6817086317340984322",
-      "chatted": false
-    },
-    {
-      "uniqueId": "tranquochuy.toiuu_sql",
-      "nickname": "Trần Quốc Huy",
-      "id": "7197251738209567749",
-      "chatted": false
-    },
-    {
-      "uniqueId": "ytevietnam2024",
-      "nickname": "YteVietNam2024",
-      "id": "7271786261731132417",
-      "chatted": false
-    }
-  ]
+  "user_follows": []
 }
