@@ -7,6 +7,7 @@ import { retry } from '../../utils/common.util';
 
 type DataJson = {
   user_id: string;
+  is_close_browser: boolean;
   user_follows: {
     uniqueId: string;
     nickname: string;
@@ -94,7 +95,9 @@ export class TiktokMessageCommand extends CommandRunner {
     } catch (error) {
       console.log(error);
     } finally {
-      await browser.close();
+      if (dataJson.is_close_browser) {
+        await browser.close();
+      }
     }
   }
 
