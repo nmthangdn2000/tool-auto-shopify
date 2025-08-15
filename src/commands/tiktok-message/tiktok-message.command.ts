@@ -166,14 +166,13 @@ export class TiktokMessageCommand extends CommandRunner {
         //   `https://www.tiktok.com/messages?from=homepage&lang=en&u=7277192393706324999`,
         // );
 
-        let frameContext: Page | FrameLocator;
+        let frameContext: Page | FrameLocator = page;
 
-        const iframe = await page.$(`iframe[src*="${user.id}"]`);
+        if (page.url().includes('business-suite')) {
+          const iframe = page.locator(`iframe[src*="${user.id}"]`);
+          await iframe.waitFor({ state: 'visible', timeout: 2 * 60 * 1000 });
 
-        if (iframe) {
           frameContext = page.frameLocator(`iframe[src*="${user.id}"]`);
-        } else {
-          frameContext = page;
         }
 
         const input = frameContext.locator('div[contenteditable="true"]');
