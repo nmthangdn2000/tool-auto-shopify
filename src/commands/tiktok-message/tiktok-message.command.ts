@@ -1,19 +1,26 @@
 import { HttpService } from '@nestjs/axios';
 import { Command, CommandRunner } from 'nest-commander';
-import { readFileSync, writeFileSync } from 'fs';
+import {
+  readFileSync,
+  writeFileSync,
+  createWriteStream,
+  createReadStream,
+} from 'fs';
 import { launchBrowser } from '../../utils/browser.util';
 import { FrameLocator, Locator, Page } from 'playwright-core';
 import { retry } from '../../utils/common.util';
+import { parse, format } from 'fast-csv';
 
 type DataJson = {
   user_id: string;
   is_close_browser: boolean;
-  user_follows: {
-    uniqueId: string;
-    nickname: string;
-    id: string;
-    chatted: boolean;
-  }[];
+};
+
+type UserFollow = {
+  uniqueId: string;
+  nickname: string;
+  id: string;
+  chatted: boolean;
 };
 
 type ScrollOptions = {
@@ -32,11 +39,11 @@ type ScrollResult = {
 @Command({
   name: 'tiktok-message',
   description: 'Tiktok message',
-  arguments: '<file-data>',
+  arguments: '<file-data> <message-file> <user-follow-csv>',
 })
 export class TiktokMessageCommand extends CommandRunner {
   private isWriting = false;
-  private writeQueue: DataJson['user_follows'] = [];
+  private writeQueue: UserFollow[] = [];
 
   constructor(private readonly httpService: HttpService) {
     super();
@@ -44,16 +51,22 @@ export class TiktokMessageCommand extends CommandRunner {
 
   async run(inputs: string[]) {
     const pathFileSetting = inputs[0];
+    const messageFile = inputs[1];
+    const userFollowCsvFile = inputs[2];
+
     const dataJson = JSON.parse(
       readFileSync(pathFileSetting, 'utf8'),
     ) as DataJson;
 
-    const message = readFileSync(inputs[1], 'utf8');
+    const message = readFileSync(messageFile, 'utf8');
 
     if (!message) {
       console.log('Message file not found');
       return;
     }
+
+    // Read user follows from CSV
+    const userFollows = await this.readUserFollowsFromCsv(userFollowCsvFile);
 
     const browser = await launchBrowser(true);
 
@@ -77,18 +90,26 @@ export class TiktokMessageCommand extends CommandRunner {
         throw new Error('Please set show_browser to true to login to TikTok');
       }
 
-      await this.handleSendMessage(page, dataJson, message, pathFileSetting);
+      await this.handleSendMessage(
+        page,
+        userFollows,
+        message,
+        userFollowCsvFile,
+      );
 
       await page.locator('a[data-e2e="nav-profile"] button').click();
 
       console.log('Getting followers');
-      await this.getFollowers(page, pathFileSetting);
+      await this.getFollowers(page, userFollowCsvFile);
 
+      // Re-read user follows after getting new followers
+      const updatedUserFollows =
+        await this.readUserFollowsFromCsv(userFollowCsvFile);
       await this.handleSendMessage(
         page,
-        JSON.parse(readFileSync(pathFileSetting, 'utf8')) as DataJson,
+        updatedUserFollows,
         message,
-        pathFileSetting,
+        userFollowCsvFile,
       );
 
       console.log('Done');
@@ -101,21 +122,94 @@ export class TiktokMessageCommand extends CommandRunner {
     }
   }
 
+  private async readUserFollowsFromCsv(csvFile: string): Promise<UserFollow[]> {
+    return new Promise((resolve) => {
+      const userFollows: UserFollow[] = [];
+
+      // Kiểm tra xem file có tồn tại và có header không
+      try {
+        const fileContent = readFileSync(csvFile, 'utf8').trim();
+
+        // Nếu file rỗng hoặc không có header, tạo header
+        if (
+          !fileContent ||
+          !fileContent.includes('uniqueId,nickname,id,chatted')
+        ) {
+          console.log('Creating CSV header for file:', csvFile);
+          writeFileSync(csvFile, 'uniqueId,nickname,id,chatted\n');
+          resolve(userFollows);
+          return;
+        }
+
+        createReadStream(csvFile)
+          .pipe(parse({ headers: true }))
+          .on('data', (row: any) => {
+            const userRow = row as Record<string, string>;
+            userFollows.push({
+              uniqueId: String(userRow.uniqueId || ''),
+              nickname: String(userRow.nickname || ''),
+              id: String(userRow.id || ''),
+              chatted: String(userRow.chatted || 'false') === 'true',
+            });
+          })
+          .on('end', () => resolve(userFollows))
+          .on('error', () => {
+            console.log('Error reading CSV, creating new file with header');
+            writeFileSync(csvFile, 'uniqueId,nickname,id,chatted\n');
+            resolve(userFollows);
+          });
+      } catch {
+        // Nếu file không tồn tại, tạo file mới với header
+        console.log(
+          'File not found, creating new CSV file with header:',
+          csvFile,
+        );
+        writeFileSync(csvFile, 'uniqueId,nickname,id,chatted\n');
+        resolve(userFollows);
+      }
+    });
+  }
+
+  private async writeUserFollowsToCsv(
+    csvFile: string,
+    userFollows: UserFollow[],
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const csvStream = format({ headers: true });
+      const writeStream = createWriteStream(csvFile);
+
+      csvStream.pipe(writeStream);
+
+      userFollows.forEach((user) => {
+        csvStream.write({
+          uniqueId: user.uniqueId,
+          nickname: user.nickname,
+          id: user.id,
+          chatted: user.chatted.toString(),
+        });
+      });
+
+      csvStream.end();
+      writeStream.on('finish', resolve);
+      writeStream.on('error', reject);
+    });
+  }
+
   private async handleSendMessage(
     page: Page,
-    dataJson: DataJson,
+    userFollows: UserFollow[],
     message: string,
-    pathFileSetting: string,
+    csvFile: string,
   ) {
-    const userNotChatted = dataJson.user_follows.filter((u) => !u.chatted);
+    const userNotChatted = userFollows.filter((u) => !u.chatted);
 
     if (userNotChatted.length > 0) {
       console.log('Sending message to', userNotChatted.length, 'users');
-      await this.message(page, dataJson, message, pathFileSetting);
+      await this.message(page, userFollows, message, csvFile);
     }
   }
 
-  private async getFollowers(page: Page, pathFileSetting: string) {
+  private async getFollowers(page: Page, csvFile: string) {
     page.on('response', async (response) => {
       const url = response.url();
       if (url.includes('/api/user/list/')) {
@@ -139,7 +233,7 @@ export class TiktokMessageCommand extends CommandRunner {
         }));
 
         this.writeQueue.push(...data);
-        this.processWriteQueue(pathFileSetting);
+        await this.processWriteQueue(csvFile);
       }
     });
 
@@ -156,11 +250,11 @@ export class TiktokMessageCommand extends CommandRunner {
 
   private async message(
     page: Page,
-    dataJson: DataJson,
+    userFollows: UserFollow[],
     message: string,
-    pathFileSetting: string,
+    csvFile: string,
   ) {
-    for (const user of dataJson.user_follows) {
+    for (const user of userFollows) {
       if (user.chatted) continue;
 
       await retry(async () => {
@@ -189,7 +283,7 @@ export class TiktokMessageCommand extends CommandRunner {
         await frameContext.locator('svg[data-e2e="message-send"]').click();
 
         user.chatted = true;
-        writeFileSync(pathFileSetting, JSON.stringify(dataJson, null, 2));
+        await this.writeUserFollowsToCsv(csvFile, userFollows);
 
         console.log(`Message sent to ${user.nickname}`);
       });
@@ -225,16 +319,13 @@ export class TiktokMessageCommand extends CommandRunner {
     return { rounds, lastHeight, stoppedBecause };
   }
 
-  private processWriteQueue(pathFileSetting: string) {
+  private async processWriteQueue(csvFile: string) {
     if (this.isWriting || this.writeQueue.length === 0) return;
     this.isWriting = true;
 
     try {
-      const dataJson = JSON.parse(
-        readFileSync(pathFileSetting, 'utf8'),
-      ) as DataJson;
-
-      const existedIds = new Set(dataJson.user_follows.map((u) => u.uniqueId));
+      const existingUserFollows = await this.readUserFollowsFromCsv(csvFile);
+      const existedIds = new Set(existingUserFollows.map((u) => u.uniqueId));
       const newItems = this.writeQueue.filter(
         (u) => !existedIds.has(u.uniqueId),
       );
@@ -242,8 +333,8 @@ export class TiktokMessageCommand extends CommandRunner {
       console.log('newItems', newItems.length);
 
       if (newItems.length > 0) {
-        dataJson.user_follows.push(...newItems);
-        writeFileSync(pathFileSetting, JSON.stringify(dataJson, null, 2));
+        const updatedUserFollows = [...existingUserFollows, ...newItems];
+        await this.writeUserFollowsToCsv(csvFile, updatedUserFollows);
       }
     } finally {
       this.isWriting = false;

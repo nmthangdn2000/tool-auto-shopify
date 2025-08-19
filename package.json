@@ -43,6 +43,7 @@
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
     "axios": "^1.10.0",
+    "fast-csv": "^5.0.5",
     "nest-commander": "^3.17.0",
     "playwright-core": "^1.53.0",
     "reflect-metadata": "^0.2.2",
