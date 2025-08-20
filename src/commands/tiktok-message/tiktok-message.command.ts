@@ -332,10 +332,29 @@ export class TiktokMessageCommand extends CommandRunner {
 
         await input.click();
         await page.waitForTimeout(1000);
-        await page.keyboard.type(message);
-        await page.waitForTimeout(Math.random() * 1000 + 1000);
 
-        await frameContext.locator('svg[data-e2e="message-send"]').click();
+        // Tách message thành nhiều đoạn nếu có \n và gửi từng đoạn
+        const messageParts = message
+          .split('\n')
+          .filter((part) => part.trim() !== '');
+
+        for (let i = 0; i < messageParts.length; i++) {
+          const part = messageParts[i].trim();
+          if (part) {
+            await page.keyboard.type(part);
+            await page.waitForTimeout(Math.random() * 500 + 300);
+
+            // Gửi message này
+            await frameContext.locator('svg[data-e2e="message-send"]').click();
+            await page.waitForTimeout(Math.random() * 1000 + 1000);
+
+            // Nếu còn đoạn tiếp theo, click lại vào input để chuẩn bị gửi đoạn tiếp
+            if (i < messageParts.length - 1) {
+              await input.click();
+              await page.waitForTimeout(500);
+            }
+          }
+        }
 
         user.chatted = true;
         await this.writeUserFollowsToCsv(csvFile, userFollows);
