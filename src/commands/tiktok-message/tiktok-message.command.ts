@@ -44,6 +44,8 @@ type ScrollResult = {
 export class TiktokMessageCommand extends CommandRunner {
   private isWriting = false;
   private writeQueue: UserFollow[] = [];
+  private messagesThisMinute = 0;
+  private lastMessageTime = 0;
 
   constructor(private readonly httpService: HttpService) {
     super();
@@ -120,6 +122,36 @@ export class TiktokMessageCommand extends CommandRunner {
         await browser.close();
       }
     }
+  }
+
+  private async checkMinuteLimit(): Promise<boolean> {
+    const now = Date.now();
+
+    // Reset counter if it's been more than a minute
+    if (now - this.lastMessageTime > 60000) {
+      this.messagesThisMinute = 0;
+    }
+
+    // Check if we've sent too many messages this minute
+    if (this.messagesThisMinute >= 4) {
+      const waitTime = 60000 - (now - this.lastMessageTime);
+      if (waitTime > 0) {
+        console.log(
+          `Rate limit reached (4 messages/minute). Waiting ${Math.ceil(waitTime / 1000)} seconds...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, waitTime));
+        this.messagesThisMinute = 0;
+      }
+    }
+
+    return true;
+  }
+
+  private getRandomDelay(): number {
+    // Random delay between 20-40 seconds
+    const minDelay = 20000; // 20 seconds
+    const maxDelay = 40000; // 40 seconds
+    return Math.random() * (maxDelay - minDelay) + minDelay;
   }
 
   private async readUserFollowsFromCsv(csvFile: string): Promise<UserFollow[]> {
@@ -257,6 +289,9 @@ export class TiktokMessageCommand extends CommandRunner {
     for (const user of userFollows) {
       if (user.chatted) continue;
 
+      // Check rate limit before sending
+      await this.checkMinuteLimit();
+
       await retry(async () => {
         await page.goto(`https://www.tiktok.com/messages?lang=en&u=${user.id}`);
         // await page.goto(
@@ -276,16 +311,49 @@ export class TiktokMessageCommand extends CommandRunner {
         await input.waitFor({
           state: 'visible',
         });
+
+        // Thực hiện một số click ngẫu nhiên để tạo hiệu ứng tự nhiên
+        const randomClicks = Math.floor(Math.random() * 5) + 2; // 2-6 clicks
+        for (let i = 0; i < randomClicks; i++) {
+          await this.naturalClickInMainContentArea(
+            page,
+            Math.random() * 0.8 + 0.1, // X: 0.1-0.9
+            Math.random() * 0.6 + 0.2, // Y: 0.2-0.8 (tránh vùng trên và dưới)
+            {
+              headerHeight: 200,
+              sidebarWidth: 450,
+              bottomHeight: 120,
+              preClickDelay: Math.random() * 200 + 100, // 100-300ms
+              postClickDelay: Math.random() * 150 + 50, // 50-200ms
+            },
+          );
+          await page.waitForTimeout(Math.random() * 500 + 200); // Chờ 200-700ms giữa các click
+        }
+
         await input.click();
         await page.waitForTimeout(1000);
         await page.keyboard.type(message);
+        await page.waitForTimeout(Math.random() * 1000 + 1000);
 
         await frameContext.locator('svg[data-e2e="message-send"]').click();
 
         user.chatted = true;
         await this.writeUserFollowsToCsv(csvFile, userFollows);
 
-        console.log(`Message sent to ${user.nickname}`);
+        // Update rate limit counters
+        this.messagesThisMinute++;
+        this.lastMessageTime = Date.now();
+
+        console.log(
+          `Message sent to ${user.nickname} (${this.messagesThisMinute}/4 this minute)`,
+        );
+
+        // Add random delay between messages
+        const delay = this.getRandomDelay();
+        console.log(
+          `Waiting ${Math.ceil(delay / 1000)} seconds before next message...`,
+        );
+        await page.waitForTimeout(delay);
       });
     }
   }
@@ -338,6 +406,284 @@ export class TiktokMessageCommand extends CommandRunner {
       }
     } finally {
       this.isWriting = false;
+    }
+  }
+
+  /**
+   * Click trong vùng bỏ header ở trên và sidebar
+   * @param page - Playwright page object
+   * @param x - Tọa độ x tương đối (0-1)
+   * @param y - Tọa độ y tương đối (0-1)
+   * @param options - Tùy chọn bổ sung
+   */
+  private async clickInMainContentArea(
+    page: Page,
+    x: number = 0.5,
+    y: number = 0.5,
+    options: {
+      headerHeight?: number;
+      sidebarWidth?: number;
+      bottomHeight?: number;
+      delay?: number;
+      button?: 'left' | 'right' | 'middle';
+      clickCount?: number;
+    } = {},
+  ) {
+    const {
+      headerHeight = 80, // Chiều cao header mặc định (px)
+      sidebarWidth = 240, // Chiều rộng sidebar mặc định (px)
+      bottomHeight = 120, // Chiều cao bottom (input chat) mặc định (px)
+      delay = 100,
+      button = 'left',
+      clickCount = 1,
+    } = options;
+
+    try {
+      // Lấy kích thước viewport
+      const viewport = page.viewportSize();
+      if (!viewport) {
+        throw new Error('Không thể lấy kích thước viewport');
+      }
+
+      const { width: viewportWidth, height: viewportHeight } = viewport;
+
+      // Tính toán vùng click an toàn (bỏ header, sidebar và bottom)
+      const safeAreaX = sidebarWidth + (viewportWidth - sidebarWidth) * x;
+      const safeAreaY =
+        headerHeight + (viewportHeight - headerHeight - bottomHeight) * y;
+
+      // Đảm bảo tọa độ nằm trong vùng an toàn
+      const finalX = Math.max(
+        sidebarWidth + 10,
+        Math.min(viewportWidth - 10, safeAreaX),
+      );
+      const finalY = Math.max(
+        headerHeight + 10,
+        Math.min(viewportHeight - bottomHeight - 10, safeAreaY),
+      );
+
+      console.log(
+        `Clicking at position: (${Math.round(finalX)}, ${Math.round(finalY)})`,
+      );
+      console.log(
+        `Safe area: X from ${sidebarWidth} to ${viewportWidth}, Y from ${headerHeight} to ${viewportHeight - bottomHeight}`,
+      );
+
+      // Thực hiện click như chuột thật (mousedown + mouseup)
+      await page.mouse.move(finalX, finalY);
+      await page.waitForTimeout(50); // Chờ một chút trước khi click
+      await page.mouse.down({ button });
+      await page.waitForTimeout(delay);
+      await page.mouse.up({ button });
+
+      // Nếu cần click nhiều lần
+      if (clickCount > 1) {
+        for (let i = 1; i < clickCount; i++) {
+          await page.waitForTimeout(100);
+          await page.mouse.down({ button });
+          await page.waitForTimeout(delay);
+          await page.mouse.up({ button });
+        }
+      }
+
+      return { x: finalX, y: finalY };
+    } catch (error) {
+      console.error('Lỗi khi click trong vùng main content:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Click ngẫu nhiên trong vùng main content
+   * @param page - Playwright page object
+   * @param options - Tùy chọn bổ sung
+   */
+  private async clickRandomInMainContentArea(
+    page: Page,
+    options: {
+      headerHeight?: number;
+      sidebarWidth?: number;
+      bottomHeight?: number;
+      minX?: number;
+      maxX?: number;
+      minY?: number;
+      maxY?: number;
+      delay?: number;
+    } = {},
+  ) {
+    const {
+      headerHeight = 200,
+      sidebarWidth = 450,
+      bottomHeight = 120,
+      minX = 0.1,
+      maxX = 0.9,
+      minY = 0.1,
+      maxY = 0.9,
+      delay = 100,
+    } = options;
+
+    // Tạo tọa độ ngẫu nhiên trong vùng an toàn
+    const randomX = Math.random() * (maxX - minX) + minX;
+    const randomY = Math.random() * (maxY - minY) + minY;
+
+    return await this.clickInMainContentArea(page, randomX, randomY, {
+      headerHeight,
+      sidebarWidth,
+      bottomHeight,
+      delay,
+    });
+  }
+
+  /**
+   * Click vào một element cụ thể trong vùng main content
+   * @param page - Playwright page object
+   * @param selector - CSS selector của element
+   * @param options - Tùy chọn bổ sung
+   */
+  private async clickElementInMainContentArea(
+    page: Page,
+    selector: string,
+    options: {
+      headerHeight?: number;
+      sidebarWidth?: number;
+      bottomHeight?: number;
+      timeout?: number;
+      force?: boolean;
+    } = {},
+  ) {
+    const {
+      headerHeight = 80,
+      sidebarWidth = 240,
+      bottomHeight = 120,
+      timeout = 10000,
+      force = false,
+    } = options;
+
+    try {
+      // Tìm element
+      const element = page.locator(selector);
+      await element.waitFor({ state: 'visible', timeout });
+
+      // Lấy vị trí của element
+      const boundingBox = await element.boundingBox();
+      if (!boundingBox) {
+        throw new Error(`Không thể lấy vị trí của element: ${selector}`);
+      }
+
+      // Kiểm tra xem element có nằm trong vùng an toàn không
+      const viewport = page.viewportSize();
+      if (!viewport) {
+        throw new Error('Không thể lấy kích thước viewport');
+      }
+
+      const { width: viewportWidth, height: viewportHeight } = viewport;
+
+      // Tính toán vị trí click (center của element)
+      const elementCenterX = boundingBox.x + boundingBox.width / 2;
+      const elementCenterY = boundingBox.y + boundingBox.height / 2;
+
+      // Kiểm tra xem element có nằm trong vùng an toàn không
+      const isInSafeArea =
+        elementCenterX > sidebarWidth &&
+        elementCenterX < viewportWidth &&
+        elementCenterY > headerHeight &&
+        elementCenterY < viewportHeight - bottomHeight;
+
+      if (!isInSafeArea && !force) {
+        console.warn(
+          `Element ${selector} không nằm trong vùng an toàn. Vị trí: (${elementCenterX}, ${elementCenterY})`,
+        );
+        return false;
+      }
+
+      // Click vào element với hiệu ứng tự nhiên
+      await element.click({ timeout, force });
+      console.log(
+        `Clicked element: ${selector} at (${Math.round(elementCenterX)}, ${Math.round(elementCenterY)})`,
+      );
+
+      return true;
+    } catch (error) {
+      console.error(`Lỗi khi click element ${selector}:`, error);
+      return false;
+    }
+  }
+
+  /**
+   * Click tự nhiên với hiệu ứng di chuyển chuột từ vị trí hiện tại
+   * @param page - Playwright page object
+   * @param x - Tọa độ x tương đối (0-1)
+   * @param y - Tọa độ y tương đối (0-1)
+   * @param options - Tùy chọn bổ sung
+   */
+  private async naturalClickInMainContentArea(
+    page: Page,
+    x: number = 0.5,
+    y: number = 0.5,
+    options: {
+      headerHeight?: number;
+      sidebarWidth?: number;
+      bottomHeight?: number;
+      preClickDelay?: number;
+      postClickDelay?: number;
+      button?: 'left' | 'right' | 'middle';
+    } = {},
+  ) {
+    const {
+      headerHeight = 200,
+      sidebarWidth = 450,
+      bottomHeight = 120,
+      preClickDelay = 100, // Thời gian chờ trước khi click
+      postClickDelay = 50, // Thời gian chờ sau khi click
+      button = 'left',
+    } = options;
+
+    try {
+      // Lấy kích thước viewport
+      const viewport = page.viewportSize();
+      if (!viewport) {
+        throw new Error('Không thể lấy kích thước viewport');
+      }
+
+      const { width: viewportWidth, height: viewportHeight } = viewport;
+
+      // Tính toán vùng click an toàn
+      const safeAreaX = sidebarWidth + (viewportWidth - sidebarWidth) * x;
+      const safeAreaY =
+        headerHeight + (viewportHeight - headerHeight - bottomHeight) * y;
+
+      // Đảm bảo tọa độ nằm trong vùng an toàn
+      const finalX = Math.max(
+        sidebarWidth + 10,
+        Math.min(viewportWidth - 10, safeAreaX),
+      );
+      const finalY = Math.max(
+        headerHeight + 10,
+        Math.min(viewportHeight - bottomHeight - 10, safeAreaY),
+      );
+
+      console.log(
+        `Natural clicking at position: (${Math.round(finalX)}, ${Math.round(finalY)})`,
+      );
+
+      // Di chuyển chuột từ vị trí hiện tại đến vị trí đích
+      await page.mouse.move(finalX, finalY, { steps: 10 });
+
+      // Chờ một chút trước khi click
+      await page.waitForTimeout(preClickDelay);
+
+      // Thực hiện click tự nhiên
+      await page.mouse.down({ button });
+      await page.waitForTimeout(50); // Thời gian giữ chuột
+      await page.mouse.up({ button });
+
+      // Chờ sau khi click
+      await page.waitForTimeout(postClickDelay);
+
+      return { x: finalX, y: finalY };
+    } catch (error) {
+      console.error('Lỗi khi thực hiện natural click:', error);
+      return false;
     }
   }
 }
