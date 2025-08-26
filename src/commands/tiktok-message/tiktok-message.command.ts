@@ -99,8 +99,6 @@ export class TiktokMessageCommand extends CommandRunner {
         userFollowCsvFile,
       );
 
-      await page.locator('a[data-e2e="nav-profile"] button').click();
-
       console.log('Getting followers');
       await this.getFollowers(page, userFollowCsvFile);
 
