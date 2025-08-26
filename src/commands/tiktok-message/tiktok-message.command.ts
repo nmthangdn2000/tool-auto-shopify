@@ -100,6 +100,8 @@ export class TiktokMessageCommand extends CommandRunner {
         userFollowCsvFile,
       );
 
+      await page.waitForTimeout(5000);
+
       console.log('Getting followers');
       await this.getFollowers(page, userFollowCsvFile);
 
