@@ -89,6 +89,7 @@ export class TiktokMessageCommand extends CommandRunner {
 
       if (!isLoggedIn) {
         console.log('Please login to TikTok');
+        await page.waitForTimeout(60000 * 5); // 5 minutes
         throw new Error('Please set show_browser to true to login to TikTok');
       }
 
