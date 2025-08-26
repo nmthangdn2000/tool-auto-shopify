@@ -75,7 +75,7 @@ export class TiktokMessageCommand extends CommandRunner {
     try {
       const page = await browser.newPage();
 
-      await page.goto('https://www.tiktok.com', {
+      await page.goto(`https://www.tiktok.com/@${dataJson.user_id}`, {
         waitUntil: 'domcontentloaded',
       });
 
